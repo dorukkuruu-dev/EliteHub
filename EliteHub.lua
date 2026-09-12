@@ -1,5 +1,5 @@
--- // Grow A Garden 2 | HUB - Key System
--- // Made by ___
+-- // Elite Hub - Key System
+-- // Made by Elite
 
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
@@ -13,21 +13,21 @@ local VALID_KEYS = {                               -- add/remove valid keys here
     ["EXAMPLEKEY123"] = true,
     ["TESTKEY456"] = true,
 }
-local HUB_NAME = "Grow A Garden 2 | HUB"
-local CREATOR = "Made by ___"
+local HUB_NAME = "Elite Hub"
+local CREATOR = "Made by Elite"
 
 ------------------------------------------------
 -- CLEAN UP OLD GUI (avoid duplicates on re-run)
 ------------------------------------------------
-if LocalPlayer.PlayerGui:FindFirstChild("GAG2_KeySystem") then
-    LocalPlayer.PlayerGui.GAG2_KeySystem:Destroy()
+if LocalPlayer.PlayerGui:FindFirstChild("EliteHub_KeySystem") then
+    LocalPlayer.PlayerGui.EliteHub_KeySystem:Destroy()
 end
 
 ------------------------------------------------
 -- GUI BUILD
 ------------------------------------------------
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "GAG2_KeySystem"
+ScreenGui.Name = "EliteHub_KeySystem"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
@@ -60,7 +60,7 @@ local TitleCorner = Instance.new("UICorner")
 TitleCorner.CornerRadius = UDim.new(0, 12)
 TitleCorner.Parent = TitleBar
 
-local TitleFix = Instance.new("Frame") -- covers bottom corners so it looks square there
+local TitleFix = Instance.new("Frame")
 TitleFix.Size = UDim2.new(1, 0, 0, 12)
 TitleFix.Position = UDim2.new(0, 0, 1, -12)
 TitleFix.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
@@ -160,7 +160,6 @@ CopyBtnStroke.Parent = CopyBtn
 -- BUTTON LOGIC
 ------------------------------------------------
 
--- Hover effects
 local function hover(btn, colorIn, colorOut)
     btn.MouseEnter:Connect(function()
         TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = colorIn}):Play()
@@ -172,7 +171,6 @@ end
 hover(CheckBtn, Color3.fromRGB(55, 200, 105), Color3.fromRGB(45, 180, 90))
 hover(CopyBtn, Color3.fromRGB(60, 60, 60), Color3.fromRGB(45, 45, 45))
 
--- Copy link button
 CopyBtn.MouseButton1Click:Connect(function()
     if setclipboard then
         setclipboard(KEY_LINK)
@@ -184,7 +182,6 @@ CopyBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- Check key button
 CheckBtn.MouseButton1Click:Connect(function()
     local enteredKey = KeyBox.Text
     if enteredKey == "" then
@@ -198,7 +195,7 @@ CheckBtn.MouseButton1Click:Connect(function()
         StatusText.TextColor3 = Color3.fromRGB(80, 255, 120)
 
         task.wait(1)
-        Main:Destroy() -- close key GUI
+        Main:Destroy()
 
         -- ==== put your loadstring / main script call here ====
         -- loadstring(game:HttpGet("[YOUR MAIN SCRIPT LINK HERE]"))()
