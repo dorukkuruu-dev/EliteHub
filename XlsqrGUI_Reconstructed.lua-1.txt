@@ -1,0 +1,752 @@
+--[[
+    XlsqrGUI — Reconstructed from UnveilR V3.01 execution log
+    Authors: Xlsqr & Sakura
+    Deobfuscated & cleaned by: Senior Luau Developer (Claude)
+    Game Target: Slap Battles (or similar slap-mechanic Roblox game)
+--]]
+
+-- ============================================================
+--[ Services ]
+-- ============================================================
+local Players       = game:GetService("Players")
+local RunService    = game:GetService("RunService")
+local TweenService  = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+game:GetService("SoundService")
+game:GetService("Lighting")
+game:GetService("ReplicatedStorage")
+game:GetService("HttpService")
+game:GetService("CoreGui")
+game:GetService("Workspace")
+
+-- ============================================================
+--[ Constants ]
+-- ============================================================
+local LocalPlayer   = Players.LocalPlayer
+local Heartbeat     = RunService.Heartbeat
+local RenderStepped = RunService.RenderStepped
+
+-- Auto-play target positions (right-side field spawn points)
+local POS_RIGHT     = Vector3.new(-470.6, -5.9, 34.4)
+local POS_RIGHT_ALT = Vector3.new(-484.2, -3.9, 21.4)
+local POS_LEFT      = Vector3.new(-475.6, -5.8, 29.3)
+local POS_LEFT_B    = Vector3.new(-473.4, -5.9, 111)
+local POS_LEFT_C    = Vector3.new(-474.7, -5.9, 91)    -- primary LEFT target
+local POS_LEFT_D    = Vector3.new(-483.4, -3.9, 97.3)
+
+-- Behaviour constants
+local AUTO_PLAY_SPEED   = 57    -- walk speed magnitude for AutoPlay locomotion
+local STEAL_RADIUS      = 20    -- default steal radius (editable via textbox)
+local STEAL_DURATION    = 0     -- unused in log, reserved
+local SPIN_SPEED        = 0     -- SpinBot angular speed (set by user)
+
+-- Tween shorthand
+local function Tween(instance, duration, props, style, direction)
+    style     = style     or Enum.EasingStyle.Quad
+    direction = direction or Enum.EasingDirection.Out
+    TweenService:Create(instance, TweenInfo.new(duration, style, direction), props):Play()
+end
+
+-- ============================================================
+--[ Feature State Flags ]
+-- ============================================================
+local featureStates = {
+    AutoSteal        = false,
+    SpinBot          = false,
+    AutoBat          = false,
+    SpeedWhileStealing = false,
+    Fling            = false,
+    FreezePlayer     = false,
+    AutoPlayRight    = false,
+    AutoPlayLeft     = false,
+}
+
+-- Active connections pool (for cleanup on respawn)
+local connections = {}
+
+-- ============================================================
+--[ Character Helpers ]
+-- ============================================================
+local Character, HumanoidRootPart, Humanoid
+
+local function RefreshCharacter()
+    Character = LocalPlayer.Character
+    if not Character then return end
+    HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+    Humanoid         = Character:FindFirstChildOfClass("Humanoid")
+end
+
+task.spawn(RefreshCharacter)
+
+-- ============================================================
+--[ Infinite Jump ]
+-- ============================================================
+task.spawn(function()
+    task.wait(2)
+    UserInputService.JumpRequest:Connect(function()
+        if Humanoid and featureStates.InfJump then
+            Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        end
+    end)
+end)
+-- Inf Jump is auto-enabled at load
+featureStates.InfJump = true
+
+-- ============================================================
+--[ SpinBot — Heartbeat ]
+-- ============================================================
+local spinAngle = 0
+Heartbeat:Connect(function(dt)
+    if not featureStates.SpinBot then return end
+    if not Character then return end
+    local root = Character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    spinAngle = (spinAngle + SPIN_SPEED * dt) % 360
+    root.CFrame = CFrame.new(root.Position) * CFrame.Angles(0, math.rad(spinAngle), 0)
+end)
+
+-- ============================================================
+--[ AutoBat connection handles ]
+-- ============================================================
+local AutoBatConnection, AutoBatRenderConnection
+
+-- ============================================================
+--[ UI Construction ]
+-- ============================================================
+
+-- ── ScreenGui ────────────────────────────────────────────────
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name            = "XlsqrGUI"
+ScreenGui.ResetOnSpawn    = false
+ScreenGui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
+ScreenGui.IgnoreGuiInset  = true
+ScreenGui.Parent          = LocalPlayer.PlayerGui
+
+-- ── TopBar ───────────────────────────────────────────────────
+local TopBar = Instance.new("Frame", ScreenGui)
+TopBar.Name                 = "TopBar"
+TopBar.Size                 = UDim2.new(0, 400, 0, 56)
+TopBar.Position             = UDim2.new(0.5, -200, 0, 4)
+TopBar.BackgroundColor3     = Color3.fromRGB(0, 0, 0)
+TopBar.BackgroundTransparency = 0.05
+TopBar.BorderSizePixel      = 0
+TopBar.ZIndex               = 10
+
+local TopBarCorner = Instance.new("UICorner", TopBar)
+TopBarCorner.CornerRadius   = UDim.new(0, 14)
+
+local TopBarStroke = Instance.new("UIStroke", TopBar)
+TopBarStroke.Thickness      = 1.5
+TopBarStroke.Color          = Color3.fromRGB(50, 50, 50)
+
+-- ── Avatar thumbnail ─────────────────────────────────────────
+local AvatarFrame = Instance.new("Frame", TopBar)
+AvatarFrame.Size            = UDim2.new(0, 36, 0, 36)
+AvatarFrame.Position        = UDim2.new(0, 10, 0.5, -18)
+AvatarFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+AvatarFrame.ZIndex          = 11
+
+local AvatarFrameCorner = Instance.new("UICorner", AvatarFrame)
+AvatarFrameCorner.CornerRadius = UDim.new(1, 0)
+
+local AvatarFrameStroke = Instance.new("UIStroke", AvatarFrame)
+AvatarFrameStroke.Color     = Color3.fromRGB(80, 80, 80)
+
+local AvatarImage = Instance.new("ImageLabel", AvatarFrame)
+AvatarImage.Size                = UDim2.new(1, -2, 1, -2)
+AvatarImage.Position            = UDim2.new(0, 1, 0, 1)
+AvatarImage.BackgroundTransparency = 1
+AvatarImage.ZIndex              = 12
+
+local AvatarImageCorner = Instance.new("UICorner", AvatarImage)
+AvatarImageCorner.CornerRadius  = UDim.new(1, 0)
+
+-- Load avatar thumbnail asynchronously
+task.spawn(function()
+    pcall(function()
+        local userId = Players:GetUserIdFromUsernameAsync(LocalPlayer.Name)
+        AvatarImage.Image = Players:GetUserThumbnailAsync(
+            userId,
+            Enum.ThumbnailType.HeadShot,
+            Enum.ThumbnailSize.Size100x100
+        )
+    end)
+end)
+
+-- ── Credit label ─────────────────────────────────────────────
+local CreditLabel = Instance.new("TextLabel", TopBar)
+CreditLabel.Size                = UDim2.new(0, 110, 0, 18)
+CreditLabel.Position            = UDim2.new(0, 54, 0, 5)
+CreditLabel.BackgroundTransparency = 1
+CreditLabel.Text                = "Made By Xlsqr and Sakura"
+CreditLabel.TextColor3          = Color3.fromRGB(255, 255, 255)
+CreditLabel.Font                = Enum.Font.GothamBold
+CreditLabel.TextSize            = 13
+CreditLabel.TextXAlignment      = Enum.TextXAlignment.Left
+CreditLabel.ZIndex              = 11
+
+-- ── Status label ─────────────────────────────────────────────
+local StatusLabel = Instance.new("TextLabel", TopBar)
+StatusLabel.Size                = UDim2.new(0, 60, 0, 14)
+StatusLabel.Position            = UDim2.new(0, 54, 0, 24)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text                = "READY"
+StatusLabel.TextColor3          = Color3.fromRGB(0, 220, 100)
+StatusLabel.Font                = Enum.Font.GothamBold
+StatusLabel.TextSize            = 10
+StatusLabel.TextXAlignment      = Enum.TextXAlignment.Left
+StatusLabel.ZIndex              = 12
+
+-- ── Steal-radius progress bar ─────────────────────────────────
+local ProgressBg = Instance.new("Frame", TopBar)
+ProgressBg.Size             = UDim2.new(0, 150, 0, 10)
+ProgressBg.Position         = UDim2.new(0, 116, 0, 26)
+ProgressBg.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+ProgressBg.ZIndex           = 12
+
+local ProgressBgCorner = Instance.new("UICorner", ProgressBg)
+ProgressBgCorner.CornerRadius = UDim.new(1, 0)
+
+local ProgressBgStroke = Instance.new("UIStroke", ProgressBg)
+ProgressBgStroke.Color      = Color3.fromRGB(50, 50, 50)
+
+local ProgressFill = Instance.new("Frame", ProgressBg)
+ProgressFill.Size           = UDim2.new(0, 0, 1, 0)   -- filled dynamically
+ProgressFill.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+ProgressFill.ZIndex         = 13
+
+local ProgressFillCorner = Instance.new("UICorner", ProgressFill)
+ProgressFillCorner.CornerRadius = UDim.new(1, 0)
+
+-- ── Steal-radius label & input ────────────────────────────────
+local RadiusLabel = Instance.new("TextLabel", TopBar)
+RadiusLabel.Size                = UDim2.new(0, 14, 0, 14)
+RadiusLabel.Position            = UDim2.new(0, 272, 0, 26)
+RadiusLabel.BackgroundTransparency = 1
+RadiusLabel.Text                = "R:"
+RadiusLabel.TextColor3          = Color3.fromRGB(150, 150, 150)
+RadiusLabel.Font                = Enum.Font.GothamBold
+RadiusLabel.TextSize            = 9
+RadiusLabel.ZIndex              = 12
+
+local RadiusInput = Instance.new("TextBox", TopBar)
+RadiusInput.Size            = UDim2.new(0, 30, 0, 16)
+RadiusInput.Position        = UDim2.new(0, 288, 0, 25)
+RadiusInput.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+RadiusInput.Text            = tostring(STEAL_RADIUS)
+RadiusInput.TextColor3      = Color3.fromRGB(0, 220, 100)
+RadiusInput.Font            = Enum.Font.GothamBold
+RadiusInput.TextSize        = 10
+RadiusInput.ZIndex          = 12
+
+local RadiusInputCorner = Instance.new("UICorner", RadiusInput)
+RadiusInputCorner.CornerRadius = UDim.new(0, 5)
+
+local RadiusInputStroke = Instance.new("UIStroke", RadiusInput)
+RadiusInputStroke.Color     = Color3.fromRGB(50, 50, 50)
+
+-- Update STEAL_RADIUS when user finishes typing
+RadiusInput.FocusLost:Connect(function(enterPressed)
+    local value = tonumber(RadiusInput.Text)
+    if value then
+        STEAL_RADIUS = math.floor(math.clamp(value, 1, 200))
+        RadiusInput.Text = tostring(STEAL_RADIUS)
+    else
+        RadiusInput.Text = tostring(STEAL_RADIUS)
+    end
+end)
+
+-- ── Home / Menu toggle button ─────────────────────────────────
+local HomeBtn = Instance.new("TextButton", TopBar)
+HomeBtn.Name            = "HomeBtn"
+HomeBtn.Size            = UDim2.new(0, 40, 0, 40)
+HomeBtn.Position        = UDim2.new(1, -48, 0.5, -20)
+HomeBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+HomeBtn.Text            = ""
+HomeBtn.AutoButtonColor = false
+HomeBtn.ZIndex          = 11
+
+local HomeBtnCorner = Instance.new("UICorner", HomeBtn)
+HomeBtnCorner.CornerRadius = UDim.new(0, 10)
+
+local HomeBtnStroke = Instance.new("UIStroke", HomeBtn)
+HomeBtnStroke.Thickness = 1.5
+HomeBtnStroke.Color     = Color3.fromRGB(60, 60, 60)
+
+-- Home icon (drawn with Frames — arrow + house body)
+local HomeIconContainer = Instance.new("Frame", HomeBtn)
+HomeIconContainer.Size                  = UDim2.new(0, 24, 0, 24)
+HomeIconContainer.Position              = UDim2.new(0.5, -12, 0.5, -12)
+HomeIconContainer.BackgroundTransparency = 1
+HomeIconContainer.ZIndex                = 12
+
+-- Roof left slope
+local RoofLeft = Instance.new("Frame", HomeIconContainer)
+RoofLeft.Size            = UDim2.new(0, 15, 0, 3)
+RoofLeft.Position        = UDim2.new(0, -1, 0, 2)
+RoofLeft.Rotation        = 38
+RoofLeft.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+RoofLeft.BorderSizePixel = 0
+RoofLeft.ZIndex          = 13
+Instance.new("UICorner", RoofLeft).CornerRadius = UDim.new(0, 1)
+
+-- Roof right slope
+local RoofRight = Instance.new("Frame", HomeIconContainer)
+RoofRight.Size            = UDim2.new(0, 15, 0, 3)
+RoofRight.Position        = UDim2.new(0, 10, 0, 2)
+RoofRight.Rotation        = -38
+RoofRight.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+RoofRight.BorderSizePixel = 0
+RoofRight.ZIndex          = 13
+Instance.new("UICorner", RoofRight).CornerRadius = UDim.new(0, 1)
+
+-- Chimney
+local Chimney = Instance.new("Frame", HomeIconContainer)
+Chimney.Size             = UDim2.new(0, 3, 0, 6)
+Chimney.Position         = UDim2.new(0, 17, 0, -1)
+Chimney.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+Chimney.BorderSizePixel  = 0
+Chimney.ZIndex           = 13
+
+-- House body
+local HouseBody = Instance.new("Frame", HomeIconContainer)
+HouseBody.Size             = UDim2.new(0, 18, 0, 12)
+HouseBody.Position         = UDim2.new(0.5, -9, 0, 11)
+HouseBody.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+HouseBody.BorderSizePixel  = 0
+HouseBody.ZIndex           = 13
+Instance.new("UICorner", HouseBody).CornerRadius = UDim.new(0, 2)
+
+-- Door (cut-out using background colour)
+local Door = Instance.new("Frame", HomeIconContainer)
+Door.Size             = UDim2.new(0, 6, 0, 9)
+Door.Position         = UDim2.new(0.5, -3, 1, -9)
+Door.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+Door.BorderSizePixel  = 0
+Door.ZIndex           = 14
+Instance.new("UICorner", Door).CornerRadius = UDim.new(0, 2)
+
+-- Left window
+local WindowLeft = Instance.new("Frame", HomeIconContainer)
+WindowLeft.Size             = UDim2.new(0, 4, 0, 4)
+WindowLeft.Position         = UDim2.new(0, 5, 0, 13)
+WindowLeft.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+WindowLeft.BorderSizePixel  = 0
+WindowLeft.ZIndex           = 14
+
+-- Right window
+local WindowRight = Instance.new("Frame", HomeIconContainer)
+WindowRight.Size             = UDim2.new(0, 4, 0, 4)
+WindowRight.Position         = UDim2.new(0, 15, 0, 13)
+WindowRight.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+WindowRight.BorderSizePixel  = 0
+WindowRight.ZIndex           = 14
+
+-- ── Dropdown menu frame ───────────────────────────────────────
+local MenuFrame = Instance.new("Frame", ScreenGui)
+MenuFrame.Name               = "MenuFrame"
+MenuFrame.Size               = UDim2.new(0, 0, 0, 0)   -- animated open
+MenuFrame.Position           = UDim2.new(1, -5, 0, 0)
+MenuFrame.AnchorPoint        = Vector2.new(1, 0)
+MenuFrame.BackgroundTransparency = 1
+MenuFrame.ClipsDescendants   = true
+MenuFrame.Visible            = false
+MenuFrame.ZIndex             = 50
+
+-- Helper: create a menu feature button with indicator dot
+local function CreateMenuButton(name, yOffset, parent)
+    local btn = Instance.new("TextButton", parent)
+    btn.Name             = name
+    btn.Size             = UDim2.new(0, 65, 0, 65)
+    btn.Position         = UDim2.new(0, 3, 0, yOffset)
+    btn.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+    btn.Text             = name
+    btn.TextColor3       = Color3.fromRGB(180, 180, 180)
+    btn.Font             = Enum.Font.GothamBold
+    btn.TextSize         = 10
+    btn.AutoButtonColor  = false
+    btn.TextWrapped      = true
+    btn.ZIndex           = 51
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
+
+    local stroke = Instance.new("UIStroke", btn)
+    stroke.Thickness = 1.5
+    stroke.Color     = Color3.fromRGB(35, 35, 35)
+
+    local dot = Instance.new("Frame", btn)
+    dot.Size             = UDim2.new(0, 8, 0, 8)
+    dot.Position         = UDim2.new(1, -13, 0, 5)
+    dot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    dot.ZIndex           = 52
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+
+    return btn, stroke, dot
+end
+
+-- Helper: tween a button into its "active" (green) state
+local function ActivateButton(btn, stroke, dot)
+    Tween(btn,    0.2, { BackgroundColor3 = Color3.fromRGB(0, 130, 55) })
+    Tween(stroke, 0.2, { Color            = Color3.fromRGB(0, 200, 90) })
+    Tween(dot,    0.2, { BackgroundColor3 = Color3.fromRGB(0, 255, 120) })
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+end
+
+-- Helper: tween a button into its "inactive" (grey) state
+local function DeactivateButton(btn, stroke, dot)
+    Tween(btn,    0.2, { BackgroundColor3 = Color3.fromRGB(10, 10, 10) })
+    Tween(stroke, 0.2, { Color            = Color3.fromRGB(35, 35, 35) })
+    Tween(dot,    0.2, { BackgroundColor3 = Color3.fromRGB(80, 80, 80) })
+    btn.TextColor3 = Color3.fromRGB(180, 180, 180)
+end
+
+-- ── Feature buttons ───────────────────────────────────────────
+local BtnAutoSteal,   StrokeAutoSteal,   DotAutoSteal   = CreateMenuButton("Auto Steal",   3,   MenuFrame)
+local BtnSpin,        StrokeSpin,        DotSpin        = CreateMenuButton("Spin",         73,  MenuFrame)
+local BtnAutoBat,     StrokeAutoBat,     DotAutoBat     = CreateMenuButton("Auto Bat",     143, MenuFrame)
+local BtnSpeedSteal,  StrokeSpeedSteal,  DotSpeedSteal  = CreateMenuButton("Speed Steal",  213, MenuFrame)
+local BtnFling,       StrokeFling,       DotFling       = CreateMenuButton("Fling",        283, MenuFrame)
+
+-- ── AutoPlay buttons (on main ScreenGui, always visible) ──────
+local BtnAutoPlayRight = Instance.new("TextButton", ScreenGui)
+BtnAutoPlayRight.Name                  = "AutoPlayRight"
+BtnAutoPlayRight.Size                  = UDim2.new(0, 130, 0, 90)
+BtnAutoPlayRight.Position              = UDim2.new(0, 10, 0.5, -100)
+BtnAutoPlayRight.BackgroundColor3      = Color3.fromRGB(255, 255, 255)
+BtnAutoPlayRight.BackgroundTransparency = 0.85
+BtnAutoPlayRight.Text                  = "Auto Play\nRight"
+BtnAutoPlayRight.TextColor3            = Color3.fromRGB(255, 255, 255)
+BtnAutoPlayRight.Font                  = Enum.Font.GothamBold
+BtnAutoPlayRight.TextSize              = 16
+BtnAutoPlayRight.AutoButtonColor       = false
+BtnAutoPlayRight.ZIndex                = 5
+Instance.new("UICorner", BtnAutoPlayRight).CornerRadius = UDim.new(0, 14)
+
+local StrokeAutoPlayRight = Instance.new("UIStroke", BtnAutoPlayRight)
+StrokeAutoPlayRight.Thickness    = 1.5
+StrokeAutoPlayRight.Color        = Color3.fromRGB(200, 200, 200)
+StrokeAutoPlayRight.Transparency = 0.4
+
+local BtnAutoPlayLeft = Instance.new("TextButton", ScreenGui)
+BtnAutoPlayLeft.Name                  = "AutoPlayLeft"
+BtnAutoPlayLeft.Size                  = UDim2.new(0, 130, 0, 90)
+BtnAutoPlayLeft.Position              = UDim2.new(0, 10, 0.5, 10)
+BtnAutoPlayLeft.BackgroundColor3      = Color3.fromRGB(255, 255, 255)
+BtnAutoPlayLeft.BackgroundTransparency = 0.85
+BtnAutoPlayLeft.Text                  = "Auto Play\nLeft"
+BtnAutoPlayLeft.TextColor3            = Color3.fromRGB(255, 255, 255)
+BtnAutoPlayLeft.Font                  = Enum.Font.GothamBold
+BtnAutoPlayLeft.TextSize              = 16
+BtnAutoPlayLeft.AutoButtonColor       = false
+BtnAutoPlayLeft.ZIndex                = 5
+Instance.new("UICorner", BtnAutoPlayLeft).CornerRadius = UDim.new(0, 14)
+
+local StrokeAutoPlayLeft = Instance.new("UIStroke", BtnAutoPlayLeft)
+StrokeAutoPlayLeft.Thickness    = 1.5
+StrokeAutoPlayLeft.Color        = Color3.fromRGB(200, 200, 200)
+StrokeAutoPlayLeft.Transparency = 0.4
+
+-- ============================================================
+--[ Logic / Connections ]
+-- ============================================================
+
+-- ── HomeBtn hover effects ─────────────────────────────────────
+HomeBtn.MouseEnter:Connect(function()
+    Tween(HomeBtnStroke, 0.2, { Color = Color3.fromRGB(0, 200, 100) })
+    Tween(HomeBtn,       0.2, { BackgroundColor3 = Color3.fromRGB(25, 25, 25) })
+end)
+
+HomeBtn.MouseLeave:Connect(function()
+    Tween(HomeBtnStroke, 0.2, { Color = Color3.fromRGB(60, 60, 60) })
+    Tween(HomeBtn,       0.2, { BackgroundColor3 = Color3.fromRGB(18, 18, 18) })
+end)
+
+-- ── HomeBtn click → open menu with Back-easing animation ─────
+HomeBtn.MouseButton1Click:Connect(function()
+    MenuFrame.Visible = true
+    TweenService:Create(
+        MenuFrame,
+        TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+        { Size = UDim2.new(0, 71, 0, 351) }
+    ):Play()
+end)
+
+-- ── Auto Steal ───────────────────────────────────────────────
+BtnAutoSteal.MouseButton1Click:Connect(function()
+    featureStates.AutoSteal = not featureStates.AutoSteal
+
+    if featureStates.AutoSteal then
+        ActivateButton(BtnAutoSteal, StrokeAutoSteal, DotAutoSteal)
+
+        -- Turn off Auto Bat if it was active (mutual exclusion)
+        featureStates.AutoBat = false
+        DeactivateButton(BtnAutoBat, StrokeAutoBat, DotAutoBat)
+
+        Heartbeat:Connect(function()
+            if not featureStates.AutoSteal then return end
+            local char = LocalPlayer.Character
+            if not char then return end
+            -- Iterate all other players and attempt to steal within radius
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer and player.Character then
+                    local otherRoot = player.Character:FindFirstChild("HumanoidRootPart")
+                    local myRoot    = char:FindFirstChild("HumanoidRootPart")
+                    if otherRoot and myRoot then
+                        local dist = (myRoot.Position - otherRoot.Position).Magnitude
+                        if dist <= STEAL_RADIUS then
+                            -- Fire steal remote (game-specific, adapt as needed)
+                            local remote = game:GetService("ReplicatedStorage"):FindFirstChild("StealBall")
+                            if remote then
+                                remote:FireServer(player)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    else
+        DeactivateButton(BtnAutoSteal, StrokeAutoSteal, DotAutoSteal)
+    end
+end)
+
+-- ── SpinBot ──────────────────────────────────────────────────
+BtnSpin.MouseButton1Click:Connect(function()
+    featureStates.SpinBot = not featureStates.SpinBot
+
+    if featureStates.SpinBot then
+        ActivateButton(BtnSpin, StrokeSpin, DotSpin)
+        local char = LocalPlayer.Character
+        if not char then return end
+        -- SpinBot loop runs in the shared Heartbeat connection above
+    else
+        DeactivateButton(BtnSpin, StrokeSpin, DotSpin)
+        spinAngle = 0
+    end
+end)
+
+-- ── Auto Bat + Fling (share toggle) ──────────────────────────
+BtnAutoBat.MouseButton1Click:Connect(function()
+    featureStates.AutoBat = not featureStates.AutoBat
+
+    if featureStates.AutoBat then
+        ActivateButton(BtnAutoBat, StrokeAutoBat, DotAutoBat)
+
+        -- Also visually activate Fling button (they work together in the log)
+        ActivateButton(BtnFling, StrokeFling, DotFling)
+        featureStates.Fling = true
+
+        -- AutoBat: move character toward ball on every Heartbeat
+        AutoBatConnection = Heartbeat:Connect(function()
+            if not featureStates.AutoBat then return end
+            local char = LocalPlayer.Character
+            if not char then return end
+            -- Game-specific: find the ball and move toward it
+            local ball = workspace:FindFirstChild("Ball") or workspace:FindFirstChild("SoccerBall")
+            if ball then
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if root then
+                    root.CFrame = CFrame.new(root.Position, ball.Position)
+                end
+            end
+        end)
+
+        -- Fling: apply high velocity on RenderStepped
+        AutoBatRenderConnection = RenderStepped:Connect(function()
+            if not featureStates.Fling then return end
+            local char = LocalPlayer.Character
+            if not char then return end
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if root then
+                local ball = workspace:FindFirstChild("Ball")
+                if ball and (root.Position - ball.Position).Magnitude < 5 then
+                    ball.AssemblyLinearVelocity = root.CFrame.LookVector * 200
+                end
+            end
+        end)
+    else
+        ActivateButton(BtnAutoBat, StrokeAutoBat, DotAutoBat)   -- toggle to inactive
+        DeactivateButton(BtnAutoBat, StrokeAutoBat, DotAutoBat)
+        DeactivateButton(BtnFling, StrokeFling, DotFling)
+        featureStates.Fling = false
+        if AutoBatConnection then AutoBatConnection:Disconnect() end
+        if AutoBatRenderConnection then AutoBatRenderConnection:Disconnect() end
+    end
+end)
+
+-- ── Speed While Stealing ─────────────────────────────────────
+BtnSpeedSteal.MouseButton1Click:Connect(function()
+    featureStates.SpeedWhileStealing = not featureStates.SpeedWhileStealing
+
+    if featureStates.SpeedWhileStealing then
+        ActivateButton(BtnSpeedSteal, StrokeSpeedSteal, DotSpeedSteal)
+
+        Heartbeat:Connect(function()
+            if not featureStates.SpeedWhileStealing then return end
+            if not LocalPlayer:GetAttribute("Stealing") then return end
+            local char = LocalPlayer.Character
+            if not char then return end
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.WalkSpeed = 100
+            end
+        end)
+    else
+        DeactivateButton(BtnSpeedSteal, StrokeSpeedSteal, DotSpeedSteal)
+        -- Restore walk speed
+        local char = LocalPlayer.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = 16 end
+        end
+    end
+end)
+
+-- ── Fling (standalone toggle) ─────────────────────────────────
+BtnFling.MouseButton1Click:Connect(function()
+    featureStates.Fling = not featureStates.Fling
+
+    if featureStates.Fling then
+        ActivateButton(BtnFling, StrokeFling, DotFling)
+    else
+        DeactivateButton(BtnFling, StrokeFling, DotFling)
+    end
+end)
+
+-- ── AutoPlay Right ────────────────────────────────────────────
+--  Moves the player's HumanoidRootPart toward POS_RIGHT each Heartbeat.
+--  Uses velocity-based locomotion (AssemblyLinearVelocity) matching the log.
+BtnAutoPlayRight.MouseButton1Click:Connect(function()
+    featureStates.AutoPlayRight = not featureStates.AutoPlayRight
+
+    if featureStates.AutoPlayRight then
+        BtnAutoPlayRight.BackgroundTransparency = 0.55
+        BtnAutoPlayRight.TextColor3             = Color3.fromRGB(0, 255, 120)
+        StrokeAutoPlayRight.Color               = Color3.fromRGB(0, 255, 120)
+        StrokeAutoPlayRight.Transparency        = 0
+
+        task.spawn(function()
+            -- Wait for the character (or current character respawn)
+            local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+            local root = char:WaitForChild("HumanoidRootPart")
+
+            Heartbeat:Connect(function()
+                if not featureStates.AutoPlayRight then return end
+                if not root or not root.Parent then return end
+
+                local targetPos = Vector3.new(POS_RIGHT.X, root.Position.Y, POS_RIGHT.Z)
+                local direction = targetPos - root.Position
+
+                if direction.Magnitude > 2 then
+                    -- Velocity-based movement (matches log: AssemblyLinearVelocity)
+                    root.AssemblyLinearVelocity = Vector3.new(
+                        direction.Unit.X * AUTO_PLAY_SPEED,
+                        root.AssemblyLinearVelocity.Y,
+                        direction.Unit.Z * AUTO_PLAY_SPEED
+                    )
+                else
+                    root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+                end
+            end)
+        end)
+    else
+        BtnAutoPlayRight.BackgroundTransparency = 0.85
+        BtnAutoPlayRight.TextColor3             = Color3.fromRGB(255, 255, 255)
+        StrokeAutoPlayRight.Color               = Color3.fromRGB(200, 200, 200)
+        StrokeAutoPlayRight.Transparency        = 0.4
+    end
+end)
+
+-- ── AutoPlay Left ─────────────────────────────────────────────
+--  Same logic but toward POS_LEFT_C.
+BtnAutoPlayLeft.MouseButton1Click:Connect(function()
+    featureStates.AutoPlayLeft = not featureStates.AutoPlayLeft
+
+    if featureStates.AutoPlayLeft then
+        BtnAutoPlayLeft.BackgroundTransparency = 0.55
+        BtnAutoPlayLeft.TextColor3             = Color3.fromRGB(0, 255, 120)
+        StrokeAutoPlayLeft.Color               = Color3.fromRGB(0, 255, 120)
+        StrokeAutoPlayLeft.Transparency        = 0
+
+        task.spawn(function()
+            local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+            local root = char:WaitForChild("HumanoidRootPart")
+
+            Heartbeat:Connect(function()
+                if not featureStates.AutoPlayLeft then return end
+                if not root or not root.Parent then return end
+
+                local targetPos = Vector3.new(POS_LEFT_C.X, root.Position.Y, POS_LEFT_C.Z)
+                local direction = targetPos - root.Position
+
+                if direction.Magnitude > 2 then
+                    root.AssemblyLinearVelocity = Vector3.new(
+                        direction.Unit.X * AUTO_PLAY_SPEED,
+                        root.AssemblyLinearVelocity.Y,
+                        direction.Unit.Z * AUTO_PLAY_SPEED
+                    )
+                else
+                    root.AssemblyLinearVelocity = Vector3.new(0, root.AssemblyLinearVelocity.Y, 0)
+                end
+            end)
+        end)
+    else
+        BtnAutoPlayLeft.BackgroundTransparency = 0.85
+        BtnAutoPlayLeft.TextColor3             = Color3.fromRGB(255, 255, 255)
+        StrokeAutoPlayLeft.Color               = Color3.fromRGB(200, 200, 200)
+        StrokeAutoPlayLeft.Transparency        = 0.4
+    end
+end)
+
+-- ── Character respawn handler ─────────────────────────────────
+LocalPlayer.CharacterAdded:Connect(function(character)
+    task.wait(1)
+    RefreshCharacter()
+
+    -- Disconnect previous per-character connections
+    for _, conn in ipairs(connections) do
+        if typeof(conn) == "RBXScriptConnection" then
+            conn:Disconnect()
+        end
+    end
+    connections = {}
+
+    task.wait(0.1)
+
+    -- Re-hook AutoBat if it was active
+    if featureStates.AutoBat and AutoBatConnection then
+        AutoBatConnection:Disconnect()
+        AutoBatConnection = nil
+    end
+
+    -- Re-hook RenderStepped FreezePlayer-style anti-ragdoll
+    table.insert(connections, RunService.Stepped:Connect(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+            hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        end
+    end))
+
+    task.wait(0.3)
+
+    -- Wait for humanoid, then add Died connection
+    local humanoid = character:FindFirstChildWhichIsA("Humanoid")
+    if humanoid then
+        table.insert(connections, humanoid.Died:Connect(function()
+            -- Clean up on death
+            for _, conn in ipairs(connections) do
+                if typeof(conn) == "RBXScriptConnection" then
+                    conn:Disconnect()
+                end
+            end
+            connections = {}
+        end))
+    end
+
+    task.wait(0.5)
+    RefreshCharacter()
+end)
+
+-- ============================================================
+print("Xlsqr GUI Loaded! (Anti Ragdoll + Inf Jump auto-enabled)")
