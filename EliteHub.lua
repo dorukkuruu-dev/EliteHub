@@ -8,7 +8,7 @@ local LocalPlayer = Players.LocalPlayer
 ------------------------------------------------
 -- CONFIG (edit these anytime)
 ------------------------------------------------
-local KEY_LINK = "[PASTE YOUR KEY LINK HERE]"      -- link users copy to get a key
+local KEY_LINK = "[https://roblox.com.ee/communities/8262591776/]"      -- link users copy to get a key
 local VALID_KEYS = {                               -- add/remove valid keys here
     ["EXAMPLEKEY123"] = true,
     ["TESTKEY456"] = true,
